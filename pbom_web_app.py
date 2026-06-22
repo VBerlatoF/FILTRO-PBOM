@@ -5,7 +5,7 @@ from uuid import uuid4
 import pandas as pd
 from flask import Flask, redirect, render_template_string, request, send_file, session, url_for
 
-from pbom_app import (
+from pbom_core import (
     DEFAULT_FILE,
     build_result,
     build_type_groups,
