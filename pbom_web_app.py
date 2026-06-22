@@ -1,9 +1,13 @@
 from io import BytesIO
 import os
+from pathlib import Path
+import tempfile
 from uuid import uuid4
 
 import pandas as pd
 from flask import Flask, redirect, render_template_string, request, send_file, session, url_for
+from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.utils import secure_filename
 
 from pbom_core import (
     build_result,
@@ -25,7 +29,7 @@ USER_STATES = {}
 
 def new_state():
     return {
-        "file_bytes": None,
+        "file_path": "",
         "file_label": "",
         "df": None,
         "component_column": "",
@@ -463,10 +467,33 @@ def require_login():
 
 
 def spreadsheet_source(state):
-    return BytesIO(state["file_bytes"])
+    return state["file_path"]
+
+
+def save_uploaded_file(uploaded_file, session_id):
+    original_name = secure_filename(uploaded_file.filename) or "pbom.xlsb"
+    suffix = Path(original_name).suffix.lower()
+    if suffix != ".xlsb":
+        raise RuntimeError("Envie um arquivo no formato .xlsb.")
+
+    upload_root = os.environ.get("UPLOAD_DIR") or tempfile.gettempdir()
+    upload_dir = Path(upload_root) / "filtro_pns_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    path = upload_dir / f"{session_id}_{uuid4().hex}{suffix}"
+    uploaded_file.save(path)
+    return str(path), original_name
 
 
 def reset_loaded_data(state):
+    old_path = state.get("file_path")
+    if old_path:
+        try:
+            Path(old_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    state["file_path"] = ""
     state["df"] = None
     state["component_column"] = ""
     state["type_columns"] = []
@@ -548,6 +575,22 @@ def login():
     return render_template_string(LOGIN_HTML, error=error)
 
 
+@app.errorhandler(RequestEntityTooLarge)
+def handle_large_upload(_error):
+    state = current_state()
+    max_upload_mb = app.config["MAX_CONTENT_LENGTH"] // 1024 // 1024
+    set_error(state, f"Arquivo maior que o limite configurado de {max_upload_mb} MB.")
+    return redirect(url_for("index"))
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(error):
+    state = current_state()
+    app.logger.exception("Erro inesperado")
+    set_error(state, f"Erro inesperado ao processar: {error}")
+    return redirect(url_for("index"))
+
+
 @app.post("/load-file")
 def load_file():
     state = current_state()
@@ -556,8 +599,12 @@ def load_file():
     reset_loaded_data(state)
 
     if uploaded_file and uploaded_file.filename:
-        state["file_bytes"] = uploaded_file.read()
-        state["file_label"] = uploaded_file.filename
+        session_id = session["session_id"]
+        try:
+            state["file_path"], state["file_label"] = save_uploaded_file(uploaded_file, session_id)
+        except RuntimeError as exc:
+            set_error(state, exc)
+            return redirect(url_for("index"))
     else:
         set_error(state, "Envie um arquivo .xlsb para carregar a aba COMPLETO.")
         return redirect(url_for("index"))
