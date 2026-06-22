@@ -6,7 +6,6 @@ import pandas as pd
 from flask import Flask, redirect, render_template_string, request, send_file, session, url_for
 
 from pbom_core import (
-    DEFAULT_FILE,
     build_result,
     build_type_groups,
     excel_column_to_index,
@@ -26,7 +25,6 @@ USER_STATES = {}
 
 def new_state():
     return {
-        "file_path": DEFAULT_FILE,
         "file_bytes": None,
         "file_label": "",
         "df": None,
@@ -118,7 +116,7 @@ HTML = """
     }
     .file-grid {
       display: grid;
-      grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr) 170px;
+      grid-template-columns: minmax(260px, 1fr) 190px;
       gap: 12px;
       align-items: end;
     }
@@ -293,11 +291,7 @@ HTML = """
       <form action="{{ url_for('load_file') }}" method="post" enctype="multipart/form-data" class="file-grid">
         <div>
           <label for="pbom_file">Enviar arquivo .xlsb</label>
-          <input id="pbom_file" name="pbom_file" type="file" accept=".xlsb">
-        </div>
-        <div>
-          <label for="file_path">Ou usar caminho de rede/local</label>
-          <input id="file_path" name="file_path" value="{{ state.file_path }}">
+          <input id="pbom_file" name="pbom_file" type="file" accept=".xlsb" required>
         </div>
         <button type="submit">Carregar COMPLETO</button>
       </form>
@@ -469,9 +463,7 @@ def require_login():
 
 
 def spreadsheet_source(state):
-    if state["file_bytes"] is not None:
-        return BytesIO(state["file_bytes"])
-    return state["file_path"]
+    return BytesIO(state["file_bytes"])
 
 
 def reset_loaded_data(state):
@@ -560,7 +552,6 @@ def login():
 def load_file():
     state = current_state()
     uploaded_file = request.files.get("pbom_file")
-    path = request.form.get("file_path", "").strip()
 
     reset_loaded_data(state)
 
@@ -568,12 +559,8 @@ def load_file():
         state["file_bytes"] = uploaded_file.read()
         state["file_label"] = uploaded_file.filename
     else:
-        if not path:
-            set_error(state, "Envie um arquivo .xlsb ou informe um caminho de rede/local.")
-            return redirect(url_for("index"))
-        state["file_bytes"] = None
-        state["file_path"] = path
-        state["file_label"] = path
+        set_error(state, "Envie um arquivo .xlsb para carregar a aba COMPLETO.")
+        return redirect(url_for("index"))
 
     try:
         load_complete_sheet(state)
@@ -581,7 +568,7 @@ def load_file():
         set_error(state, exc)
         return redirect(url_for("index"))
 
-    source_name = state["file_label"] or state["file_path"]
+    source_name = state["file_label"]
     set_message(
         state,
         f"Arquivo carregado: {source_name}. Aba {SHEET_NAME} pronta com "
